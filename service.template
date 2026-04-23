@@ -1,0 +1,11 @@
+[Unit]
+Description=NVIDIA GPU Fan Controller
+
+[Service]
+Environment="SCRIPT_DIR=%SCRIPT_DIR%"
+ExecStart=%SCRIPT_DIR%/gpu-fan.sh
+Restart=always
+Type=simple
+
+[Install]
+WantedBy=multi-user.target

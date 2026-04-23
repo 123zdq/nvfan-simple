@@ -1,0 +1,13 @@
+# Fan curve breakpoints
+# Both lists must have equal length
+# Most GPUs thermal shutdown at ~100°C
+# Temp: 0-90 (°C, integer), Fan: 0-100 (%, integer)
+# Curve is forced to be monotonically non-decreasing; (90, 100) will be automatically added later in normalize_fan_curve()
+temp_points = [30, 40, 55, 65, 70]
+fan_points = [0, 10, 40, 100, 100]
+
+# Hysteresis: °C below current temp before allowing fan speed decrease
+hysteresis = 5
+
+# Sleep: seconds between control loop iterations
+sleep = 3
