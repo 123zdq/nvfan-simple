@@ -11,3 +11,8 @@ hysteresis = 5
 
 # Sleep: seconds between control loop iterations
 sleep = 3
+
+# Sys fan curve (hwmon3 pwm8, duty cycle 0-255)
+[sysfan]
+temp_points = [0, 40, 50, 60]
+duty_points = [0, 63, 128, 255]

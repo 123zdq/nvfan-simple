@@ -1,14 +1,13 @@
 #!/bin/bash
 set -e
 
-# NVIDIA GPU Fan Control - Update script
-# Fetches updates and sets up Python environment (no sudo required)
+# 拉取代码并设置/更新 Python 环境（无需 sudo）
 
-# Get the absolute path of the script directory
+# 获取脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Fetch latest changes from remote repository (only if git repo)
+# 拉取远程更新（仅在 git 仓库内有效）
 if git rev-parse --git-dir > /dev/null 2>&1; then
     git fetch origin 2>/dev/null || true
     if ! git diff --quiet HEAD origin/main 2>/dev/null; then
@@ -17,7 +16,7 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     fi
 fi
 
-# Check if virtual environment exists
+# 创建虚拟环境或更新依赖
 if [ ! -d ".venv" ]; then
     echo "Setting up Python environment..."
     uv venv --seed --python 3.12

@@ -1,31 +1,30 @@
 #!/bin/bash
 
-# NVIDIA GPU Fan Control - Uninstallation script
-# Stops, disables, and removes the systemd service
+# 卸载 systemd 服务：停止、禁用、删除
 
-# Get the absolute path of the script directory
+# 获取脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Stop the service if it's running
+# 如果服务正在运行则停止
 if systemctl is-active --quiet nvfan-simple; then
     echo "Stopping service: nvfan-simple..."
     sudo systemctl stop nvfan-simple
     echo "Service stopped"
 fi
 
-# Disable the service if it's enabled
+# 如果服务已启用开机自启则禁用
 if systemctl is-enabled --quiet nvfan-simple; then
     echo "Disabling service: nvfan-simple..."
     sudo systemctl disable nvfan-simple
     echo "Service disabled"
 fi
 
-# Remove the service file from systemd directory
+# 删除服务文件
 sudo rm -f "/etc/systemd/system/nvfan-simple.service"
 echo "Removed service file: /etc/systemd/system/nvfan-simple.service"
 
-# Reload systemd configuration
+# 重载 systemd 配置
 echo "Reloading systemd configuration..."
 sudo systemctl daemon-reload
 

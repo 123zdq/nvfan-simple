@@ -1,146 +1,78 @@
-"""GPU fan curve controller with hysteresis.
+"""GPU 风扇曲线控制器，带迟滞防抖。
 
-Interpolates fan speed linearly between user-defined (temp, speed) points,
-and applies hysteresis to prevent rapid oscillation when temperature drops.
-Resets fans to auto mode on exit.
+在用户定义的温度-转速点之间线性插值，降温时应用迟滞防止风扇频繁波动。退出时恢复风扇自动模式。
 """
 
-from pynvml import *
+from pynvml import (
+    nvmlDeviceGetCount,
+    nvmlDeviceGetHandleByIndex,
+    nvmlDeviceGetName,
+    nvmlDeviceGetNumFans,
+    nvmlInit,
+    nvmlShutdown,
+    nvmlSystemGetDriverVersion,
+)
 import signal
 import time
 import tomllib
 import os
 
+from Curve import Curve
+from GPU import GPU
+from SysFan import SysFan, default_sysfan_curve
+
 
 def load_config() -> dict:
-    """Load configuration from config.toml.
-    
-    Returns:
-        dict: Configuration dictionary containing temp_points, fan_points,
-              hysteresis, and sleep settings.
-    
-    Raises:
-        FileNotFoundError: If config.toml doesn't exist.
-        tomllib.TOMLDecodeError: If config.toml is malformed.
-    """
+    """读取同目录下的 config.toml 配置。"""
     config_path = os.path.join(os.path.dirname(__file__), "config.toml")
     with open(config_path, "rb") as f:
         return tomllib.load(f)
 
 
+# 加载全局配置
 config = load_config()
-TEMP_POINTS = config["temp_points"]
-FAN_POINTS = config["fan_points"]
 HYSTERESIS = config["hysteresis"]
 SLEEP = config["sleep"]
 
+# 系统风扇曲线（若配置了则使用配置值，否则用默认曲线）
+sysfan_cfg = config.get("sysfan")
+if sysfan_cfg:
+    sysfan_curve = Curve.normalize(sysfan_cfg["temp_points"], sysfan_cfg["duty_points"], y_max=255)
+else:
+    sysfan_curve = default_sysfan_curve()
+
+# 主循环运行标志
 running = True
 
 
 def signal_handler(signum: int, frame) -> None:
-    """Handle shutdown signals gracefully.
-    
-    Args:
-        signum: Signal number received.
-        frame: Current stack frame (unused).
-    """
+    """收到退出信号时终止主循环。"""
     global running
     running = False
 
 
-def normalize_fan_curve():
-    """Clamp, deduplicate, and enforce monotonicity on the fan curve.
-
-    Clamps temps to [0, 90] and fan speeds to [0, 100]. Ensures (90, 100)
-    endpoint exists. Deduplicates by temperature, at same temp keep higher fan
-    speed. Enforces fan speed monotonically non-decreasing with temperature.
-    """
-    global TEMP_POINTS, FAN_POINTS
-    TEMP_POINTS += [0, 90]
-    FAN_POINTS += [0, 100]
-    curve = {}
-    for t, f in zip(TEMP_POINTS, FAN_POINTS):
-        t, f = max(0, min(90, t)), max(0, min(100, f))
-        curve[t] = max(curve.get(t, 0), f)
-    TEMP_POINTS = []
-    FAN_POINTS = []
-    prev_fan = 0
-    for t in sorted(curve.keys()):
-        fan = max(curve[t], prev_fan)
-        prev_fan = fan
-        TEMP_POINTS.append(t)
-        FAN_POINTS.append(fan)
-
-
-class GPU:
-    """Manages fan control for a single GPU.
-
-    Attributes:
-        idx: GPU index.
-        handle: NVML device handle.
-        fan_count: Number of fans on the GPU.
-        name: GPU name.
-        prev_temp: Previous temperature reading.
-        step_down_temp: Temperature threshold for allowing fan speed decrease.
-        current_fan: Current fan speed percentage.
-    """
-
-    def __init__(self, idx, handle, fan_count, name):
-        self.idx = idx
-        self.handle = handle
-        self.fan_count = fan_count
-        self.name = name
-        self.prev_temp = 0
-        self.step_down_temp = 0
-        self.current_fan = nvmlDeviceGetFanSpeed(self.handle)
-        self.set_fan(self.current_fan)
-
-    def get_temp(self):
-        return nvmlDeviceGetTemperature(self.handle, NVML_TEMPERATURE_GPU)
-
-    def set_fan(self, speed):
-        for i in range(self.fan_count):
-            nvmlDeviceSetFanSpeed_v2(self.handle, i, speed)
-
-    def set_default_fan(self):
-        for i in range(self.fan_count):
-            nvmlDeviceSetDefaultFanSpeed_v2(self.handle, i)
-
-    def calc_fan_speed(self, temp):
-        """Linearly interpolate fan speed between curve breakpoints."""
-        point = 0
-        while point < len(TEMP_POINTS) - 1 and temp >= TEMP_POINTS[point + 1]:
-            point += 1
-        if point == len(TEMP_POINTS) - 1:
-            return 100
-
-        temp_delta = TEMP_POINTS[point + 1] - TEMP_POINTS[point]
-        fan_delta = FAN_POINTS[point + 1] - FAN_POINTS[point]
-        temp_inc = temp - TEMP_POINTS[point]
-
-        return max(FAN_POINTS[0], min(100, round(FAN_POINTS[point] + fan_delta * temp_inc / temp_delta)))
-
-
 def main() -> None:
-    """Main entry point for the GPU fan controller.
-    
-    Initializes the NVML library, detects available GPUs with fans,
-    and enters the main control loop. Handles graceful shutdown on
-    SIGTERM, SIGINT, and SIGHUP signals, restoring fans to auto mode.
-    
+    """主入口：初始化 NVML → 检测带风扇的 GPU → 进入控制循环。
+
+    收到 SIGTERM/SIGINT/SIGHUP 时优雅退出，恢复风扇自动模式。
+
     Raises:
-        RuntimeError: If no GPUs or no GPUs with fans are detected.
+        RuntimeError: 未检测到 GPU 或没有带风扇的 GPU。
     """
     global running
+
+    # 注册信号处理器，支持优雅退出
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGHUP, signal_handler)
 
-    normalize_fan_curve()
+    # 构建风扇曲线并初始化 NVML
+    fan_curve = Curve.normalize(config["temp_points"], config["fan_points"])
     nvmlInit()
     gpus = []
 
     try:
+        # 枚举 GPU 设备，只保留带风扇的
         print("Finding...")
         dev_count = nvmlDeviceGetCount()
 
@@ -155,20 +87,28 @@ def main() -> None:
                 print(f"GPU {idx}: {name} (no fans, skipping)")
             else:
                 print(f"GPU {idx}: {name} ({fan_count} fans)")
-                gpus.append(GPU(idx, handle, fan_count, name))
+                gpus.append(GPU(idx, handle, fan_count, name, fan_curve))
 
         print(f"Driver: {nvmlSystemGetDriverVersion()}")
 
         if not gpus:
             raise RuntimeError("No GPUs with fans detected")
-        
+
+        # 初始化系统风扇
+        sysfan = SysFan()
+        sysfan_prev_temp = 0
+        sysfan_step_down_temp = 0
+
+        # 主控制循环
         print("Running... (Ctrl+C to stop)")
         while running:
-            for gpu in gpus:
-                temp = gpu.get_temp()
+            # 读取所有 GPU 温度
+            temps = [gpu.get_temp() for gpu in gpus]
 
+            # 根据曲线和迟滞调整每块 GPU 的风扇转速
+            for gpu, temp in zip(gpus, temps):
                 if temp < gpu.step_down_temp or temp > gpu.prev_temp:
-                    fan = gpu.calc_fan_speed(temp)
+                    fan = gpu.curve(temp)
                     gpu.prev_temp = temp
                     gpu.step_down_temp = temp - HYSTERESIS
 
@@ -177,13 +117,22 @@ def main() -> None:
                         gpu.current_fan = fan
                         print(f"GPU{gpu.idx}: {temp}°C -> {fan}%")
 
+            # 根据 GPU 温度调节系统风扇 PWM
+            sysfan_temp = temps[0]
+            if sysfan_temp < sysfan_step_down_temp or sysfan_temp > sysfan_prev_temp:
+                duty = sysfan_curve(sysfan_temp)
+                sysfan_prev_temp = sysfan_temp
+                sysfan_step_down_temp = sysfan_temp - HYSTERESIS
+                sysfan.set_duty(duty)
+
             time.sleep(SLEEP)
 
+    # 退出时恢复所有风扇为自动模式
     finally:
         if gpus:
             for gpu in gpus:
                 gpu.set_default_fan()
-            print("\nStopped, fans reset to auto mode")
+        print("\nStopped, fans reset to auto mode")
         nvmlShutdown()
 
 

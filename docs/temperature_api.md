@@ -94,16 +94,15 @@ def nvmlDeviceSetTemperatureThreshold(handle, threshold, temp)
 nvmlDeviceSetTemperatureThreshold(handle, NVML_TEMPERATURE_THRESHOLD_GPU_MAX, 85)
 ```
 
-### 5. 获取显存温度（Field API）
+### 4. 获取显存温度（Field API）
 
 ```python
-def nvmlDeviceGetFieldValues(handle, fieldIds, nFieldIds)
+def nvmlDeviceGetFieldValues(handle, fieldIds)
 ```
 
 - **参数**:
   - `handle`: GPU 设备句柄
-  - `fieldIds`: 字段 ID 列表
-  - `nFieldIds`: 字段数量
+  - `fieldIds`: 字段 ID 列表（长度自动计算，无需额外传参）
 - **返回**: `c_nvmlFieldValue_t` 数组
 
 **示例**:
@@ -111,7 +110,7 @@ def nvmlDeviceGetFieldValues(handle, fieldIds, nFieldIds)
 def get_memory_temperature(handle):
     """获取显存温度"""
     field_ids = [NVML_FI_DEV_MEMORY_TEMP]
-    values = nvmlDeviceGetFieldValues(handle, field_ids, len(field_ids))
+    values = nvmlDeviceGetFieldValues(handle, field_ids)
     
     # 根据值类型获取温度
     if values[0].valueType == NVML_VALUE_TYPE_UNSIGNED_INT:
@@ -125,25 +124,35 @@ mem_temp = get_memory_temperature(handle)
 print(f"显存温度：{mem_temp}°C")
 ```
 
-### 6. 获取热设置信息
+### 5. 获取热设置信息
 
 ```python
-def nvmlDeviceGetThermalSettings(device, sensorindex, c_thermalsettings)
+def nvmlDeviceGetThermalSettings(device, sensorindex, c_thermalsettings=c_nvmlGpuThermalSettings_t())
 ```
 
 - **参数**:
   - `device`: GPU 设备句柄
   - `sensorindex`: 传感器索引
-  - `c_thermalsettings`: 热设置结构体指针
-- **返回**: None
+  - `c_thermalsettings`: 可选，传入预分配的 `c_nvmlGpuThermalSettings_t` 结构体（默认自动创建）
+- **返回**:
+  - 默认调用返回 `c_nvmlGpuThermalSensor_t` 列表（传感器数组）
+  - 传入结构体时返回 `NVML_SUCCESS`
+- **说明**: `c_nvmlGpuThermalSensor_t` 结构体包含以下字段：
+  - `controller`: 温控器 ID
+  - `defaultMinTemp`: 默认最小温度
+  - `defaultMaxTemp`: 默认最大温度
+  - `currentTemp`: 当前温度
+  - `target`: 目标值
 
 **示例**:
 ```python
-thermal = nvmlDeviceGetThermalSettings(handle, 0)
-print(f"临界温度：{thermal.temp}°C")
+# 默认用法，返回传感器列表
+sensors = nvmlDeviceGetThermalSettings(handle, 0)
+for s in sensors:
+    print(f"默认温度范围: {s.defaultMinTemp}°C - {s.defaultMaxTemp}°C")
 ```
 
-### 7. 获取机箱温度（Unit API）
+### 6. 获取机箱温度（Unit API）
 
 ```python
 def nvmlUnitGetTemperature(unit, type)
