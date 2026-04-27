@@ -22,7 +22,7 @@ write_sysfs("/sys/class/hwmon/hwmon3/pwm8_enable", 1)   # 手动模式
 # fan8_min    — 转速下限（校准时用）
 
 # 设置 PWM 占空比（0-255）
-write_sysfs("/sys/class/hwmon/hwmon3/pwm8_enable", 255)
+write_sysfs("/sys/class/hwmon/hwmon3/pwm8", 255)
 
 
 """

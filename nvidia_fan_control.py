@@ -20,6 +20,7 @@ import os
 from Curve import Curve
 from GPU import GPU
 from SysFan import SysFan, default_sysfan_curve
+from VRAM import VRAM
 
 
 def load_config() -> dict:
@@ -40,6 +41,8 @@ if sysfan_cfg:
     sysfan_curve = Curve.normalize(sysfan_cfg["temp_points"], sysfan_cfg["duty_points"], y_max=255)
 else:
     sysfan_curve = default_sysfan_curve()
+
+SYSFAN_HYSTERESIS = 20
 
 # 主循环运行标志
 running = True
@@ -70,6 +73,7 @@ def main() -> None:
     fan_curve = Curve.normalize(config["temp_points"], config["fan_points"])
     nvmlInit()
     gpus = []
+    vrams = []
 
     try:
         # 枚举 GPU 设备，只保留带风扇的
@@ -99,6 +103,15 @@ def main() -> None:
         sysfan_prev_temp = 0
         sysfan_step_down_temp = 0
 
+        # 初始化显存温度读取（失败则跳过，只影响 sysfan）
+        vrams_raw = VRAM.detect_all()
+        for v in vrams_raw:
+            try:
+                v.open()
+                vrams.append(v)
+            except Exception:
+                pass
+
         # 主控制循环
         print("Running... (Ctrl+C to stop)")
         while running:
@@ -117,13 +130,14 @@ def main() -> None:
                         gpu.current_fan = fan
                         print(f"GPU{gpu.idx}: {temp}°C -> {fan}%")
 
-            # 根据 GPU 温度调节系统风扇 PWM
-            sysfan_temp = temps[0]
-            if sysfan_temp < sysfan_step_down_temp or sysfan_temp > sysfan_prev_temp:
-                duty = sysfan_curve(sysfan_temp)
-                sysfan_prev_temp = sysfan_temp
-                sysfan_step_down_temp = sysfan_temp - HYSTERESIS
-                sysfan.set_duty(duty)
+            # 根据 GPU0 显存温度调节系统风扇 PWM（迟滞 SYSFAN_HYSTERESIS）
+            if vrams:
+                sysfan_temp = vrams[0].get_temp()
+                if sysfan_temp < sysfan_step_down_temp or sysfan_temp > sysfan_prev_temp:
+                    duty = sysfan_curve(sysfan_temp)
+                    sysfan_prev_temp = sysfan_temp
+                    sysfan_step_down_temp = sysfan_temp - SYSFAN_HYSTERESIS
+                    sysfan.set_duty(duty)
 
             time.sleep(SLEEP)
 
@@ -132,6 +146,8 @@ def main() -> None:
         if gpus:
             for gpu in gpus:
                 gpu.set_default_fan()
+        for v in vrams:
+            v.close()
         print("\nStopped, fans reset to auto mode")
         nvmlShutdown()
 

@@ -83,7 +83,7 @@ bash gpu-fan.sh
 
 一块接在主板 SYSFAN 接口的风扇用于给 GPU 背板散热。因为它的温度源来自 GPU（而非主板传感器），无法使用 `fancontrol` 等通用工具——`sensors` 仅识别主板和 CPU 的传感器，甚至主板支持也是靠找到 NCT6687D 的驱动才实现的。
 
-程序读取 GPU 0 的核心温度，通过 `hwmon3/pwm8` 接口（0-255 占空比）PWM 调节系统风扇。配置在 `config.toml` 的 `[sysfan]` 段：
+程序读取 GPU 0 的**显存温度**（GDDR6 传感器，见下文），通过 `hwmon3/pwm8` 接口（0-255 占空比）PWM 调节系统风扇。显存温度初始化失败时，sysfan 控制会自动跳过，不影响 GPU 风扇。配置在 `config.toml` 的 `[sysfan]` 段：
 
 ```toml
 [sysfan]
@@ -108,12 +108,9 @@ sudo nvidia-smi -gtt 88 -i 0,1
 
 ### 显存温度（GDDR6）
 
-RTX 3090 的显存温度无法通过 `nvidia-smi` 直接读取。使用 [olealgoritme/gddr6](https://github.com/olealgoritme/gddr6)——通过逆向 NVIDIA 驱动找出了 GDDR6/GDDR6X 显存温度在 GPU 内存映射寄存器中的偏移，直接读取硬件传感器值。
+RTX 3090 的显存温度无法通过 `nvidia-smi` 直接读取。程序基于 [olealgoritme/gddr6](https://github.com/olealgoritme/gddr6) 的方法，通过 `mmap /dev/mem` 直接读取 GPU 内存中的温度传感器寄存器（见 `VRAM.py`）。该功能已集成到主程序中，启动时自动扫描并初始化，无需手动运行。
 
-```bash
-# 需内核启动参数 iomem=relaxed，关闭 Secure Boot
-sudo gddr6
-```
+**前置条件：** 需内核启动参数 `iomem=relaxed`，关闭 Secure Boot。显存温度初始化失败时不影响 GPU 风扇控制，仅影响 sysfan。
 
 ### 主板传感器驱动
 
@@ -129,6 +126,7 @@ sudo gddr6
 | `Curve.py` | 风扇曲线：断点定义 + 线性插值 |
 | `GPU.py` | 单 GPU 风扇管理（pynvml） |
 | `SysFan.py` | 系统风扇管理（sysfs hwmon PWM） |
+| `VRAM.py` | GDDR6 显存温度读取（mmap /dev/mem） |
 | `config.toml` | 风扇曲线配置 |
 | `gpu-fan.sh` | 手动启动脚本（含 GPU 优化命令） |
 | `service_setup.sh` | 安装/更新 systemd 服务 |
